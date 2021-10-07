@@ -1,0 +1,152 @@
+--------------------------------------------  Database, Schema, Warehouse and Stage creation
+
+create database user_vivek;
+
+create schema user_vivek.interview;
+
+create warehouse interview_wh with warehouse_size='small';
+
+CREATE STAGE user_vivek.interview.vivphdata ENCRYPTION=(TYPE='AWS_SSE_S3') URL='s3://vivphdata/'
+credentials=(aws_key_id='<AWS_KEY_ID>' aws_secret_key='<AWS_SECRET_KEY');
+
+
+
+--------------------------------------------       Tables and Views
+
+CREATE TABLE Airlines (
+	IATA_CODE  VARCHAR(10),
+	AIRLINE VARCHAR(60)
+);
+
+
+CREATE  TABLE Airports (
+	IATA_CODE VARCHAR(10),
+	AIRPORT VARCHAR(150),
+	CITY VARCHAR(50),
+	STATE VARCHAR(10),
+	COUNTRY VARCHAR(10),
+	LATITUDE FLOAT,
+	LONGITUDE FLOAT
+);
+
+CREATE  TABLE   Flights (
+YEAR	NUMBER(10,0),
+MONTH	NUMBER(5,0),
+DAY	 NUMBER(5,0),
+DAY_OF_WEEK	NUMBER(5,0),
+AIRLINE	 VARCHAR(10),
+FLIGHT_NUMBER	NUMBER(10,0),
+TAIL_NUMBER	VARCHAR(30),
+ORIGIN_AIRPORT	VARCHAR(10),
+DESTINATION_AIRPORT	VARCHAR(10),
+SCHEDULED_DEPARTURE	NUMBER(10,0),
+DEPARTURE_TIME	VARCHAR(10),
+DEPARTURE_DELAY	NUMBER(10,0),
+TAXI_OUT	NUMBER(10,0),
+WHEELS_OFF	VARCHAR(10),
+SCHEDULED_TIME	NUMBER(10,0),
+ELAPSED_TIME	NUMBER(10,0),
+AIR_TIME	NUMBER(10,0),
+DISTANCE	NUMBER(10,0),
+WHEELS_ON	NUMBER(10,0),
+TAXI_IN	 NUMBER(10,0),
+SCHEDULED_ARRIVAL	NUMBER(10,0),
+ARRIVAL_TIME	VARCHAR(10),
+ARRIVAL_DELAY	VARCHAR(10),
+DIVERTED	NUMBER(10,0),
+CANCELLED	NUMBER(10,0),
+CANCELLATION_REASON	VARCHAR(10),
+AIR_SYSTEM_DELAY	NUMBER(10,0),
+SECURITY_DELAY	NUMBER(10,0),
+AIRLINE_DELAY	NUMBER(10,0),
+LATE_AIRCRAFT_DELAY	NUMBER(10,0),
+WEATHER_DELAY  NUMBER(10,0)
+  );
+
+
+
+---------------   Loading Data  ( Data was uploaded to S3 bucket first )
+
+COPY INTO Airlines from @vivphdata
+file_format='csvformat' pattern='.*airlines.csv'
+VALIDATION_MODE = RETURN_ALL_ERRORS ;
+
+COPY INTO Airlines from @vivphdata
+file_format='csvformat' pattern='.*airlines.csv';
+
+-----------------------------------------------------------------
+COPY INTO Airports from @vivphdata
+file_format='csvformat' pattern='.*airports.csv'
+VALIDATION_MODE = RETURN_ALL_ERRORS ;
+
+COPY INTO Airports from @vivphdata
+file_format='csvformat' pattern='.*airports.csv';
+-----------------------------------------------------------------
+
+COPY INTO Flights from @vivphdata
+file_format='csvformat' pattern='partition-[0-9][0-9].csv'
+VALIDATION_MODE = RETURN_ALL_ERRORS ;
+
+COPY INTO Flights from @vivphdata
+file_format='csvformat' pattern='partition-[0-9][0-9].csv';
+
+
+
+--------------  VIEWS
+
+● Total number of flights by airline and airport on a monthly basis
+
+
+create or replace view flightsByAirlineAirportMonthly as 
+select airline, origin_airport, destination_airport, month, count(*) as NumberOfFlights from flights group by airline, origin_airport, destination_airport, month
+order by 1,2,3,4;
+
+
+
+● On time percentage of each airline for the year 2015
+
+create or replace view onTimePercentByAirline2015 as 
+select  A.airline, OnTimeFlights/TotalFlights * 100 as OnTimePercent from 
+    (select airline,count(*) as TotalFlights from flights where year='2015' group by airline order by airline) A
+     join
+     (select airline,count(*) as OnTimeFlights from flights where year='2015' and to_number(arrival_delay) < 0 group by airline order by airline) B 
+     on A.airline=B.airline ;
+     
+
+
+● Airlines with the largest number of delays 
+
+create or replace view airlineWithLargestDelay as 
+select airline from 
+(select airline,count(*) as Delayedflights from flights where to_number(arrival_delay) > 0 group by airline ) A
+where Delayedflights =  (select max(Delayedflights) from 
+(select airline,count(*) as Delayedflights from flights where to_number(arrival_delay) > 0 group by airline ) B )
+
+
+● Cancellation reasons by airport
+
+create or replace view cancellationReasonByAirport as
+select distinct airline, year,month,day,flight_number,origin_airport, destination_airport, cancellation_reason from airports A, flights B where A.iata_code = B.origin_airport and cancellation_reason is not null order by 1;
+
+
+● Delay reasons by airport
+
+create or replace view delayReasonsByAirport as
+select distinct airline, year,month,day,flight_number,origin_airport, destination_airport,arrival_delay, air_system_delay, security_delay, airline_delay, late_aircraft_delay, weather_delay from airports A, flights B 
+where A.iata_code = B.origin_airport and air_system_delay is not null and security_delay is not null and airline_delay is not null
+and late_aircraft_delay is not null and weather_delay is not null;
+
+
+● Airline with the most unique routes
+
+
+create or replace view flightsByAirlineUniqueRoutes as 
+select airline, NumberOfFlights from 
+(select airline, origin_airport, destination_airport, count(*) as NumberOfFlights from flights group by airline, origin_airport, destination_airport
+ ) A
+where NumberOfFlights =  (select max(NumberOfFlights) from 
+(select airline, origin_airport, destination_airport, count(*) as NumberOfFlights from flights group by airline, origin_airport, destination_airport) B );
+
+
+
+
